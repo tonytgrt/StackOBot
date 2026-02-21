@@ -4,7 +4,9 @@ Build/
 Intermediate/
 Saved/
 DerivedDataCache/
-Content/
+
+Content/FirstGameInUE5_Source.zip
+Content/StackOBot/Environment/Rocks/SM_RockFlats_01.uasset
 
 # Plugin generated directories (keep source, ignore build output)
 Plugins/*/Binaries/
