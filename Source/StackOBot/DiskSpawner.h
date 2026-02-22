@@ -5,6 +5,8 @@
 #include "FallingDisk.h"
 #include "DiskSpawner.generated.h"
 
+class UPlayerHUDWidget;   // forward declare ¨C defined in Phase 3b
+
 UCLASS()
 class STACKOBOT_API ADiskSpawner : public AActor
 {
@@ -19,7 +21,7 @@ protected:
 public:
     virtual void Tick(float DeltaTime) override;
 
-    // ©¤©¤ Grid configuration ¨C tune these in the Details panel ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+    // ©¤©¤ Grid configuration ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
     int32 GridColumns = 4;
 
@@ -30,39 +32,77 @@ public:
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
     float CellSize = 350.f;
 
-    /** Z height above the actor's location where new disks appear. */
+    /** Disks spawn this many units above the player's current Z each time they respawn. */
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
     float SpawnHeightOffset = 3000.f;
 
-    /** Disks that fall below this world Z are considered to have hit the ground. */
+    /** Hard floor: disks below this world-Z are always respawned (safety net). */
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
-    float GroundZ = 20.f;
+    float GroundZ = -123.f;
+
+    /** Disks that drop more than this many units below the player are also respawned. */
+    UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
+    float RespawnBelowOffset = 800.f;
 
     // ©¤©¤ Speed range ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
     UPROPERTY(EditAnywhere, Category = "Spawner|Speed")
-    float MinSpeed = 80.f;
+    float MinSpeed = 150.f;
 
     UPROPERTY(EditAnywhere, Category = "Spawner|Speed")
-    float MaxSpeed = 320.f;
+    float MaxSpeed = 500.f;
 
-    // ©¤©¤ Disk Blueprint child class (assign in Details panel) ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
-    // Set this to BP_FallingDisk (the Blueprint child you will create in Phase 6).
+    // ©¤©¤ Win condition ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+    /** Player wins when their Z position exceeds this value. */
+    UPROPERTY(EditAnywhere, Category = "Spawner|Win")
+    float WinZ = 1000.f;
+
+    /** Assign UI_WinScreen here in BP_DiskSpawner's Class Defaults. */
+    UPROPERTY(EditDefaultsOnly, Category = "Spawner|Win")
+    TSubclassOf<UUserWidget> WinScreenClass;
+
+    // ©¤©¤ HUD ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+    /** Assign WBP_PlayerHUD here in BP_DiskSpawner's Class Defaults. */
+    UPROPERTY(EditDefaultsOnly, Category = "Spawner|HUD")
+    TSubclassOf<UPlayerHUDWidget> HUDWidgetClass;
+
+    // ©¤©¤ Disk class ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
     UPROPERTY(EditDefaultsOnly, Category = "Spawner")
     TSubclassOf<AFallingDisk> DiskClass;
 
-    // ©¤©¤ Called by UShootingComponent when its laser hits a disk ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+    // ©¤©¤ Public API ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+    /** Called by UShootingComponent when its laser hits a disk. */
     void NotifyDiskHit(AFallingDisk* HitDisk, ACharacter* Player);
 
-private:
-    TArray<AFallingDisk*> Disks;          // Index = Col + Row * GridColumns
-    AFallingDisk* RedDisk = nullptr;   // At most one red disk at a time
-    ACharacter* CachedPlayer = nullptr;
+    /** Called by UI_WinScreen's "Play Infinite Mode" button. Disables win check and resumes play. */
+    UFUNCTION(BlueprintCallable, Category = "Spawner")
+    void StartInfiniteMode();
 
-    void  SpawnAllDisks();
+private:
+    TArray<AFallingDisk*> Disks;
+    AFallingDisk* RedDisk = nullptr;
+
+    // UPROPERTY keeps these from being garbage-collected mid-session
+    UPROPERTY()
+    TObjectPtr<ACharacter> CachedPlayer;
+
+    UPROPERTY()
+    TObjectPtr<UPlayerHUDWidget> HUDWidget;
+
+    UPROPERTY()
+    TObjectPtr<UUserWidget> WinScreenWidget;
+
+    bool  bGameWon = false;
+    bool  bInfiniteMode = false;
+    float HighestZ = 0.f;
+
+    void    SpawnAllDisks();
     FVector CellSpawnLocation(int32 Col, int32 Row) const;
-    float RandomSpeed() const;
+    float   RandomSpeed() const;
 
     void CheckGroundHits();
     void CheckRedPromotion();
     void CheckGreenUnfreeze();
+    void CheckWinCondition(float PlayerZ);
+    void UpdateHUD(float PlayerZ);
+    void ShowWinScreen();
 };

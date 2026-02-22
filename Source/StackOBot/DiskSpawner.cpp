@@ -1,5 +1,9 @@
 #include "DiskSpawner.h"
+#include "PlayerHUDWidget.h"
+
 #include "GameFramework/Character.h"
+#include "GameFramework/PlayerController.h"
+#include "Blueprint/UserWidget.h"
 #include "Kismet/GameplayStatics.h"
 #include "Math/UnrealMathUtility.h"
 
@@ -16,7 +20,26 @@ void ADiskSpawner::BeginPlay()
     Super::BeginPlay();
 
     CachedPlayer = Cast<ACharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
+    HighestZ = CachedPlayer ? CachedPlayer->GetActorLocation().Z : 0.f;
+
     SpawnAllDisks();
+
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (PC)
+    {
+        // Create HUD and show it immediately
+        if (HUDWidgetClass)
+        {
+            HUDWidget = CreateWidget<UPlayerHUDWidget>(PC, HUDWidgetClass);
+            if (HUDWidget) HUDWidget->AddToViewport();
+        }
+
+        // Pre-create the win screen but don't show it yet
+        if (WinScreenClass)
+        {
+            WinScreenWidget = CreateWidget<UUserWidget>(PC, WinScreenClass);
+        }
+    }
 }
 
 // ©¤©¤©¤ Tick ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
@@ -24,41 +47,54 @@ void ADiskSpawner::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
+    if (!CachedPlayer) return;
+
+    const float PlayerZ = CachedPlayer->GetActorLocation().Z;
+    if (PlayerZ > HighestZ) HighestZ = PlayerZ;
+
     CheckGroundHits();
     CheckRedPromotion();
     CheckGreenUnfreeze();
+    CheckWinCondition(PlayerZ);
+    UpdateHUD(PlayerZ);
 }
 
 // ©¤©¤©¤ Public ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 
-/**
- * Called by UShootingComponent when the player's laser hits a falling disk.
- * Applies the red/green freeze rule based on whether the disk is above or below
- * the player's center.
- */
 void ADiskSpawner::NotifyDiskHit(AFallingDisk* HitDisk, ACharacter* Player)
 {
     if (!HitDisk || !Player) return;
-    if (HitDisk->DiskState != EDiskState::Falling) return;  // Already frozen
+    if (HitDisk->DiskState != EDiskState::Falling) return;
 
     const float PlayerZ = Player->GetActorLocation().Z;
     const float DiskZ = HitDisk->GetActorLocation().Z;
 
     if (DiskZ > PlayerZ)
     {
-        // Disk is above the player ¡ú freeze Red.
-        // Unfreeze the previous red disk first (restores its stored fall speed).
-        if (RedDisk && RedDisk != HitDisk)
-        {
-            RedDisk->Unfreeze();
-        }
+        if (RedDisk && RedDisk != HitDisk) RedDisk->Unfreeze();
         HitDisk->FreezeRed();
         RedDisk = HitDisk;
     }
     else
     {
-        // Disk is at or below the player ¡ú freeze Green immediately.
         HitDisk->FreezeGreen();
+    }
+}
+
+/** Called by UI_WinScreen's "Play Infinite Mode" button via Blueprint. */
+void ADiskSpawner::StartInfiniteMode()
+{
+    bInfiniteMode = true;
+    bGameWon = false;
+
+    if (WinScreenWidget && WinScreenWidget->IsInViewport())
+        WinScreenWidget->RemoveFromParent();
+
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (PC)
+    {
+        PC->SetInputMode(FInputModeGameOnly());
+        PC->SetShowMouseCursor(false);
     }
 }
 
@@ -82,11 +118,8 @@ void ADiskSpawner::SpawnAllDisks()
         for (int32 Col = 0; Col < GridColumns; ++Col)
         {
             const int32 Index = Col + Row * GridColumns;
-            FVector SpawnLoc = CellSpawnLocation(Col, Row);
-
             AFallingDisk* Disk = GetWorld()->SpawnActor<AFallingDisk>(
-                DiskClass, SpawnLoc, FRotator::ZeroRotator, Params);
-
+                DiskClass, CellSpawnLocation(Col, Row), FRotator::ZeroRotator, Params);
             if (Disk)
             {
                 Disk->Initialize(RandomSpeed());
@@ -98,17 +131,20 @@ void ADiskSpawner::SpawnAllDisks()
 
 FVector ADiskSpawner::CellSpawnLocation(int32 Col, int32 Row) const
 {
-    // Center the grid on the spawner actor's XY position.
     const float GridWidth = GridColumns * CellSize;
     const float GridDepth = GridRows * CellSize;
 
     const float OffsetX = (Col + 0.5f) * CellSize - GridWidth * 0.5f;
     const float OffsetY = (Row + 0.5f) * CellSize - GridDepth * 0.5f;
 
-    FVector Origin = GetActorLocation();
-    return FVector(Origin.X + OffsetX,
-        Origin.Y + OffsetY,
-        Origin.Z + SpawnHeightOffset);
+    const FVector Origin = GetActorLocation();
+
+    // Spawn above the player's current height, not the spawner's fixed height.
+    const float BaseZ = CachedPlayer
+        ? CachedPlayer->GetActorLocation().Z + SpawnHeightOffset
+        : Origin.Z + SpawnHeightOffset;
+
+    return FVector(Origin.X + OffsetX, Origin.Y + OffsetY, BaseZ);
 }
 
 float ADiskSpawner::RandomSpeed() const
@@ -116,16 +152,19 @@ float ADiskSpawner::RandomSpeed() const
     return FMath::RandRange(MinSpeed, MaxSpeed);
 }
 
-/** Respawn any falling disk that has dropped below GroundZ. */
 void ADiskSpawner::CheckGroundHits()
 {
+    const float PlayerZ = CachedPlayer ? CachedPlayer->GetActorLocation().Z : 0.f;
+
     for (int32 i = 0; i < Disks.Num(); ++i)
     {
         AFallingDisk* Disk = Disks[i];
-        if (!Disk) continue;
-        if (Disk->DiskState != EDiskState::Falling) continue;
+        if (!Disk || Disk->DiskState != EDiskState::Falling) continue;
 
-        if (Disk->GetActorLocation().Z < GroundZ)
+        const float DiskZ = Disk->GetActorLocation().Z;
+
+        // Respawn if the disk hit the floor OR drifted too far below the player.
+        if (DiskZ < GroundZ || DiskZ < (PlayerZ - RespawnBelowOffset))
         {
             const int32 Col = i % GridColumns;
             const int32 Row = i / GridColumns;
@@ -134,43 +173,56 @@ void ADiskSpawner::CheckGroundHits()
     }
 }
 
-/**
- * If the player has climbed above the current Red disk, promote it to Green.
- * This opens the slot for the player to freeze a new disk above them.
- */
 void ADiskSpawner::CheckRedPromotion()
 {
     if (!RedDisk || !CachedPlayer) return;
     if (RedDisk->DiskState != EDiskState::FrozenRed) return;
 
-    const float PlayerZ = CachedPlayer->GetActorLocation().Z;
-    const float DiskZ = RedDisk->GetActorLocation().Z;
-
-    if (PlayerZ > DiskZ)   // Player center is now above the disk center
+    if (CachedPlayer->GetActorLocation().Z > RedDisk->GetActorLocation().Z)
     {
         RedDisk->PromoteToGreen();
         RedDisk = nullptr;
     }
 }
 
-/**
- * Unfreeze any Green disk the player has fallen below.
- * This creates gameplay pressure: falling back down costs you your platforms.
- */
 void ADiskSpawner::CheckGreenUnfreeze()
 {
     if (!CachedPlayer) return;
-
     const float PlayerZ = CachedPlayer->GetActorLocation().Z;
 
     for (AFallingDisk* Disk : Disks)
     {
-        if (!Disk) continue;
-        if (Disk->DiskState != EDiskState::FrozenGreen) continue;
-
-        if (PlayerZ < Disk->GetActorLocation().Z)  // Player fell below this disk
-        {
+        if (!Disk || Disk->DiskState != EDiskState::FrozenGreen) continue;
+        if (PlayerZ < Disk->GetActorLocation().Z)
             Disk->Unfreeze();
-        }
+    }
+}
+
+void ADiskSpawner::CheckWinCondition(float PlayerZ)
+{
+    if (bGameWon || bInfiniteMode) return;
+    if (PlayerZ >= WinZ)
+    {
+        bGameWon = true;
+        ShowWinScreen();
+    }
+}
+
+void ADiskSpawner::UpdateHUD(float PlayerZ)
+{
+    if (HUDWidget)
+        HUDWidget->UpdateValues(PlayerZ, HighestZ);
+}
+
+void ADiskSpawner::ShowWinScreen()
+{
+    if (!WinScreenWidget) return;
+    WinScreenWidget->AddToViewport(10);   // zOrder 10 so it renders on top
+
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (PC)
+    {
+        PC->SetInputMode(FInputModeUIOnly());
+        PC->SetShowMouseCursor(true);
     }
 }

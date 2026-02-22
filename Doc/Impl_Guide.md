@@ -322,6 +322,8 @@ for ground hits to respawn disks, and applies the red/green freeze rules each ti
 #include "FallingDisk.h"
 #include "DiskSpawner.generated.h"
 
+class UPlayerHUDWidget;   // forward declare – defined in Phase 3b
+
 UCLASS()
 class STACKOBOT_API ADiskSpawner : public AActor
 {
@@ -336,7 +338,7 @@ protected:
 public:
     virtual void Tick(float DeltaTime) override;
 
-    // ── Grid configuration – tune these in the Details panel ────────────────────
+    // ── Grid configuration ───────────────────────────────────────────────────────
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
     int32 GridColumns = 4;
 
@@ -347,13 +349,17 @@ public:
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
     float CellSize = 350.f;
 
-    /** Z height above the actor's location where new disks appear. */
+    /** Disks spawn this many units above the player's current Z each time they respawn. */
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
     float SpawnHeightOffset = 3000.f;
 
-    /** Disks that fall below this world Z are considered to have hit the ground. */
+    /** Hard floor: disks below this world-Z are always respawned (safety net). */
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
     float GroundZ = 20.f;
+
+    /** Disks that drop more than this many units below the player are also respawned. */
+    UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
+    float RespawnBelowOffset = 800.f;
 
     // ── Speed range ──────────────────────────────────────────────────────────────
     UPROPERTY(EditAnywhere, Category = "Spawner|Speed")
@@ -362,26 +368,60 @@ public:
     UPROPERTY(EditAnywhere, Category = "Spawner|Speed")
     float MaxSpeed = 320.f;
 
-    // ── Disk Blueprint child class (assign in Details panel) ─────────────────────
-    // Set this to BP_FallingDisk (the Blueprint child you will create in Phase 6).
+    // ── Win condition ────────────────────────────────────────────────────────────
+    /** Player wins when their Z position exceeds this value. */
+    UPROPERTY(EditAnywhere, Category = "Spawner|Win")
+    float WinZ = 1000.f;
+
+    /** Assign UI_WinScreen here in BP_DiskSpawner's Class Defaults. */
+    UPROPERTY(EditDefaultsOnly, Category = "Spawner|Win")
+    TSubclassOf<UUserWidget> WinScreenClass;
+
+    // ── HUD ──────────────────────────────────────────────────────────────────────
+    /** Assign WBP_PlayerHUD here in BP_DiskSpawner's Class Defaults. */
+    UPROPERTY(EditDefaultsOnly, Category = "Spawner|HUD")
+    TSubclassOf<UPlayerHUDWidget> HUDWidgetClass;
+
+    // ── Disk class ───────────────────────────────────────────────────────────────
     UPROPERTY(EditDefaultsOnly, Category = "Spawner")
     TSubclassOf<AFallingDisk> DiskClass;
 
-    // ── Called by UShootingComponent when its laser hits a disk ─────────────────
+    // ── Public API ───────────────────────────────────────────────────────────────
+    /** Called by UShootingComponent when its laser hits a disk. */
     void NotifyDiskHit(AFallingDisk* HitDisk, ACharacter* Player);
 
-private:
-    TArray<AFallingDisk*> Disks;          // Index = Col + Row * GridColumns
-    AFallingDisk*         RedDisk = nullptr;   // At most one red disk at a time
-    ACharacter*           CachedPlayer = nullptr;
+    /** Called by UI_WinScreen's "Play Infinite Mode" button. Disables win check and resumes play. */
+    UFUNCTION(BlueprintCallable, Category = "Spawner")
+    void StartInfiniteMode();
 
-    void  SpawnAllDisks();
+private:
+    TArray<AFallingDisk*> Disks;
+    AFallingDisk* RedDisk = nullptr;
+
+    // UPROPERTY keeps these from being garbage-collected mid-session
+    UPROPERTY()
+    TObjectPtr<ACharacter> CachedPlayer;
+
+    UPROPERTY()
+    TObjectPtr<UPlayerHUDWidget> HUDWidget;
+
+    UPROPERTY()
+    TObjectPtr<UUserWidget> WinScreenWidget;
+
+    bool  bGameWon      = false;
+    bool  bInfiniteMode = false;
+    float HighestZ      = 0.f;
+
+    void    SpawnAllDisks();
     FVector CellSpawnLocation(int32 Col, int32 Row) const;
-    float RandomSpeed() const;
+    float   RandomSpeed() const;
 
     void CheckGroundHits();
     void CheckRedPromotion();
     void CheckGreenUnfreeze();
+    void CheckWinCondition(float PlayerZ);
+    void UpdateHUD(float PlayerZ);
+    void ShowWinScreen();
 };
 ```
 
@@ -389,7 +429,11 @@ private:
 
 ```cpp
 #include "DiskSpawner.h"
+#include "PlayerHUDWidget.h"
+
 #include "GameFramework/Character.h"
+#include "GameFramework/PlayerController.h"
+#include "Blueprint/UserWidget.h"
 #include "Kismet/GameplayStatics.h"
 #include "Math/UnrealMathUtility.h"
 
@@ -406,7 +450,26 @@ void ADiskSpawner::BeginPlay()
     Super::BeginPlay();
 
     CachedPlayer = Cast<ACharacter>(UGameplayStatics::GetPlayerCharacter(this, 0));
+    HighestZ     = CachedPlayer ? CachedPlayer->GetActorLocation().Z : 0.f;
+
     SpawnAllDisks();
+
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (PC)
+    {
+        // Create HUD and show it immediately
+        if (HUDWidgetClass)
+        {
+            HUDWidget = CreateWidget<UPlayerHUDWidget>(PC, HUDWidgetClass);
+            if (HUDWidget) HUDWidget->AddToViewport();
+        }
+
+        // Pre-create the win screen but don't show it yet
+        if (WinScreenClass)
+        {
+            WinScreenWidget = CreateWidget<UUserWidget>(PC, WinScreenClass);
+        }
+    }
 }
 
 // ─── Tick ──────────────────────────────────────────────────────────────────────
@@ -414,41 +477,54 @@ void ADiskSpawner::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
+    if (!CachedPlayer) return;
+
+    const float PlayerZ = CachedPlayer->GetActorLocation().Z;
+    if (PlayerZ > HighestZ) HighestZ = PlayerZ;
+
     CheckGroundHits();
     CheckRedPromotion();
     CheckGreenUnfreeze();
+    CheckWinCondition(PlayerZ);
+    UpdateHUD(PlayerZ);
 }
 
 // ─── Public ────────────────────────────────────────────────────────────────────
 
-/**
- * Called by UShootingComponent when the player's laser hits a falling disk.
- * Applies the red/green freeze rule based on whether the disk is above or below
- * the player's center.
- */
 void ADiskSpawner::NotifyDiskHit(AFallingDisk* HitDisk, ACharacter* Player)
 {
     if (!HitDisk || !Player) return;
-    if (HitDisk->DiskState != EDiskState::Falling) return;  // Already frozen
+    if (HitDisk->DiskState != EDiskState::Falling) return;
 
     const float PlayerZ = Player->GetActorLocation().Z;
     const float DiskZ   = HitDisk->GetActorLocation().Z;
 
     if (DiskZ > PlayerZ)
     {
-        // Disk is above the player → freeze Red.
-        // Unfreeze the previous red disk first (restores its stored fall speed).
-        if (RedDisk && RedDisk != HitDisk)
-        {
-            RedDisk->Unfreeze();
-        }
+        if (RedDisk && RedDisk != HitDisk) RedDisk->Unfreeze();
         HitDisk->FreezeRed();
         RedDisk = HitDisk;
     }
     else
     {
-        // Disk is at or below the player → freeze Green immediately.
         HitDisk->FreezeGreen();
+    }
+}
+
+/** Called by UI_WinScreen's "Play Infinite Mode" button via Blueprint. */
+void ADiskSpawner::StartInfiniteMode()
+{
+    bInfiniteMode = true;
+    bGameWon      = false;
+
+    if (WinScreenWidget && WinScreenWidget->IsInViewport())
+        WinScreenWidget->RemoveFromParent();
+
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (PC)
+    {
+        PC->SetInputMode(FInputModeGameOnly());
+        PC->SetShowMouseCursor(false);
     }
 }
 
@@ -472,11 +548,8 @@ void ADiskSpawner::SpawnAllDisks()
         for (int32 Col = 0; Col < GridColumns; ++Col)
         {
             const int32 Index = Col + Row * GridColumns;
-            FVector SpawnLoc = CellSpawnLocation(Col, Row);
-
             AFallingDisk* Disk = GetWorld()->SpawnActor<AFallingDisk>(
-                DiskClass, SpawnLoc, FRotator::ZeroRotator, Params);
-
+                DiskClass, CellSpawnLocation(Col, Row), FRotator::ZeroRotator, Params);
             if (Disk)
             {
                 Disk->Initialize(RandomSpeed());
@@ -488,17 +561,20 @@ void ADiskSpawner::SpawnAllDisks()
 
 FVector ADiskSpawner::CellSpawnLocation(int32 Col, int32 Row) const
 {
-    // Center the grid on the spawner actor's XY position.
-    const float GridWidth  = GridColumns * CellSize;
-    const float GridDepth  = GridRows    * CellSize;
+    const float GridWidth = GridColumns * CellSize;
+    const float GridDepth = GridRows    * CellSize;
 
-    const float OffsetX = (Col + 0.5f) * CellSize - GridWidth  * 0.5f;
-    const float OffsetY = (Row + 0.5f) * CellSize - GridDepth  * 0.5f;
+    const float OffsetX = (Col + 0.5f) * CellSize - GridWidth * 0.5f;
+    const float OffsetY = (Row + 0.5f) * CellSize - GridDepth * 0.5f;
 
-    FVector Origin = GetActorLocation();
-    return FVector(Origin.X + OffsetX,
-                   Origin.Y + OffsetY,
-                   Origin.Z + SpawnHeightOffset);
+    const FVector Origin = GetActorLocation();
+
+    // Spawn above the player's current height, not the spawner's fixed height.
+    const float BaseZ = CachedPlayer
+                      ? CachedPlayer->GetActorLocation().Z + SpawnHeightOffset
+                      : Origin.Z + SpawnHeightOffset;
+
+    return FVector(Origin.X + OffsetX, Origin.Y + OffsetY, BaseZ);
 }
 
 float ADiskSpawner::RandomSpeed() const
@@ -506,16 +582,19 @@ float ADiskSpawner::RandomSpeed() const
     return FMath::RandRange(MinSpeed, MaxSpeed);
 }
 
-/** Respawn any falling disk that has dropped below GroundZ. */
 void ADiskSpawner::CheckGroundHits()
 {
+    const float PlayerZ = CachedPlayer ? CachedPlayer->GetActorLocation().Z : 0.f;
+
     for (int32 i = 0; i < Disks.Num(); ++i)
     {
         AFallingDisk* Disk = Disks[i];
-        if (!Disk) continue;
-        if (Disk->DiskState != EDiskState::Falling) continue;
+        if (!Disk || Disk->DiskState != EDiskState::Falling) continue;
 
-        if (Disk->GetActorLocation().Z < GroundZ)
+        const float DiskZ = Disk->GetActorLocation().Z;
+
+        // Respawn if the disk hit the floor OR drifted too far below the player.
+        if (DiskZ < GroundZ || DiskZ < (PlayerZ - RespawnBelowOffset))
         {
             const int32 Col = i % GridColumns;
             const int32 Row = i / GridColumns;
@@ -524,47 +603,125 @@ void ADiskSpawner::CheckGroundHits()
     }
 }
 
-/**
- * If the player has climbed above the current Red disk, promote it to Green.
- * This opens the slot for the player to freeze a new disk above them.
- */
 void ADiskSpawner::CheckRedPromotion()
 {
     if (!RedDisk || !CachedPlayer) return;
     if (RedDisk->DiskState != EDiskState::FrozenRed) return;
 
-    const float PlayerZ = CachedPlayer->GetActorLocation().Z;
-    const float DiskZ   = RedDisk->GetActorLocation().Z;
-
-    if (PlayerZ > DiskZ)   // Player center is now above the disk center
+    if (CachedPlayer->GetActorLocation().Z > RedDisk->GetActorLocation().Z)
     {
         RedDisk->PromoteToGreen();
         RedDisk = nullptr;
     }
 }
 
-/**
- * Unfreeze any Green disk the player has fallen below.
- * This creates gameplay pressure: falling back down costs you your platforms.
- */
 void ADiskSpawner::CheckGreenUnfreeze()
 {
     if (!CachedPlayer) return;
-
     const float PlayerZ = CachedPlayer->GetActorLocation().Z;
 
     for (AFallingDisk* Disk : Disks)
     {
-        if (!Disk) continue;
-        if (Disk->DiskState != EDiskState::FrozenGreen) continue;
-
-        if (PlayerZ < Disk->GetActorLocation().Z)  // Player fell below this disk
-        {
+        if (!Disk || Disk->DiskState != EDiskState::FrozenGreen) continue;
+        if (PlayerZ < Disk->GetActorLocation().Z)
             Disk->Unfreeze();
-        }
+    }
+}
+
+void ADiskSpawner::CheckWinCondition(float PlayerZ)
+{
+    if (bGameWon || bInfiniteMode) return;
+    if (PlayerZ >= WinZ)
+    {
+        bGameWon = true;
+        ShowWinScreen();
+    }
+}
+
+void ADiskSpawner::UpdateHUD(float PlayerZ)
+{
+    if (HUDWidget)
+        HUDWidget->UpdateValues(PlayerZ, HighestZ);
+}
+
+void ADiskSpawner::ShowWinScreen()
+{
+    if (!WinScreenWidget) return;
+    WinScreenWidget->AddToViewport(10);   // zOrder 10 so it renders on top
+
+    APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (PC)
+    {
+        PC->SetInputMode(FInputModeUIOnly());
+        PC->SetShowMouseCursor(true);
     }
 }
 ```
+
+---
+
+## Phase 3b – PlayerHUDWidget
+
+This small `UUserWidget` subclass owns two named `UTextBlock` slots that
+`ADiskSpawner` updates every tick. The `meta = (BindWidget)` specifier forces the
+Blueprint widget to contain `TextBlock` widgets with matching names — the editor
+will flag a compile error if the names don't match, which catches typos early.
+
+### `Source/StackOBot/PlayerHUDWidget.h`
+
+```cpp
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "PlayerHUDWidget.generated.h"
+
+class UTextBlock;
+
+UCLASS()
+class STACKOBOT_API UPlayerHUDWidget : public UUserWidget
+{
+    GENERATED_BODY()
+
+public:
+    /**
+     * These TextBlock names must match exactly what you name the widgets
+     * inside WBP_PlayerHUD in the Designer tab.
+     */
+    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+    TObjectPtr<UTextBlock> Text_CurrentZ;
+
+    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+    TObjectPtr<UTextBlock> Text_HighestZ;
+
+    /** Called every tick by ADiskSpawner to refresh both lines. */
+    void UpdateValues(float CurrentZ, float HighestZ);
+};
+```
+
+### `Source/StackOBot/PlayerHUDWidget.cpp`
+
+```cpp
+#include "PlayerHUDWidget.h"
+#include "Components/TextBlock.h"
+
+void UPlayerHUDWidget::UpdateValues(float CurrentZ, float HighestZ)
+{
+    if (Text_CurrentZ)
+    {
+        Text_CurrentZ->SetText(
+            FText::FromString(FString::Printf(TEXT("Height : %.0f"), CurrentZ)));
+    }
+    if (Text_HighestZ)
+    {
+        Text_HighestZ->SetText(
+            FText::FromString(FString::Printf(TEXT("Best    : %.0f"), HighestZ)));
+    }
+}
+```
+
+> **After creating these files:** right-click `StackOBot.uproject` → **Generate
+> Visual Studio project files**, then rebuild before continuing.
 
 ---
 
@@ -868,6 +1025,49 @@ wrappers so you can assign meshes and materials in the editor.
      import a PNG crosshair image).
 4. **Compile and Save**.
 
+### WBP_PlayerHUD (Widget Blueprint — must use PlayerHUDWidget as parent)
+
+1. Right-click Content Browser → **User Interface → Widget Blueprint**.
+2. In the **Pick Parent Class** dialog search for `PlayerHUDWidget` (your C++
+   class) and select it. Name the asset `WBP_PlayerHUD`.
+
+   > **Important:** the parent class must be `PlayerHUDWidget`, not the default
+   > `UserWidget`. The `BindWidget` macro will only work if the hierarchy is correct.
+
+3. Open `WBP_PlayerHUD`. Add a **Canvas Panel** as the root if not present.
+4. Add two **Text** (TextBlock) widgets inside the Canvas Panel:
+   - Name the first one exactly **`Text_CurrentZ`** (right-click the widget in
+     the Hierarchy panel → Rename).
+   - Name the second one exactly **`Text_HighestZ`**.
+   - Position both in the **top-left corner**: set Anchors to top-left, then
+     set the Position offsets to roughly (20, 20) and (20, 50).
+   - Set a readable font size (e.g., 18–24 pt).
+5. **Compile** — if the TextBlock names match the C++ `BindWidget` names you will
+   see no errors. A name mismatch produces a compile error telling you what's wrong.
+6. **Save**.
+
+### UI_WinScreen – Wire the "Play Infinite Mode" button
+
+You already have `UI_WinScreen`. Its "Play Infinite Mode" button needs to call
+`StartInfiniteMode()` on the spawner. Open `UI_WinScreen`'s **Event Graph** and
+connect the button's **On Clicked** event like this:
+
+```
+[On Clicked – PlayInfiniteMode button]
+    │
+    ▼
+[Get All Actors Of Class]  (Actor Class = BP_DiskSpawner)
+    │  Out Actors [0]
+    ▼
+[Cast To BP_DiskSpawner]
+    │  As BP Disk Spawner
+    ▼
+[Start Infinite Mode]
+```
+
+This hides the win screen, re-enables game input, and sets `bInfiniteMode = true`
+so the win condition never fires again.
+
 ---
 
 ## Phase 7 – Wire Input in BP_Bot
@@ -940,17 +1140,29 @@ you added it in Step A).
    - `Ground Z` — set to just above your floor mesh height (e.g., `20`).
    - `Min Speed` / `Max Speed` — `80` / `300` gives good variety.
 
-### Add a Win Zone (Blueprint Trigger Volume)
+### Configure Win Detection and HUD on BP_DiskSpawner
 
-1. In the **Place Actors** panel (or the Content Browser) find **Trigger Volume**
-   and drag one high in the level (e.g., Z = 4000–5000 cm).
-2. Resize it to cover the target area.
-3. In the **Details** panel click **+** next to **On Actor Begin Overlap**.
-4. In the Event Graph that opens, connect the overlap event to:
-   - **Get Game Mode** → **Cast to GM_InGame** → call the appropriate win
-     function, OR
-   - Simply **Open Level** to a win screen, OR
-   - **Print String** "You Win!" as a placeholder while testing.
+Win detection and the HUD are now handled entirely inside `ADiskSpawner` — no
+Trigger Volume is needed.
+
+1. Open **BP_DiskSpawner** → **Class Defaults** in the Details panel.
+2. Set the following properties:
+
+| Property | Value |
+|---|---|
+| `Win Z` | Height the player must reach to win (e.g., `1000`) |
+| `Win Screen Class` | `UI_WinScreen` |
+| `HUD Widget Class` | `WBP_PlayerHUD` |
+| `Spawn Height Offset` | How far above the player new disks appear (e.g., `3000`) |
+| `Respawn Below Offset` | How far below the player a disk can drift before being recycled (e.g., `800`) |
+
+1. **Compile and Save** BP_DiskSpawner.
+
+When the player's Z position exceeds `Win Z`:
+
+- `UI_WinScreen` is shown and input is locked to UI-only.
+- Clicking **Play Infinite Mode** calls `StartInfiniteMode()`, hides the screen,
+  and disables the win check permanently for that session.
 
 ### Verify World Settings
 
@@ -977,13 +1189,18 @@ Hit **Play** in the editor. Expected behavior:
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| Disks don't spawn | `DiskClass` not set on `BP_DiskSpawner` | Open `BP_DiskSpawner` Details, set `Disk Class` to `BP_FallingDisk` |
+| Disks don't spawn | `DiskClass` not set on `BP_DiskSpawner` | Open `BP_DiskSpawner` Class Defaults, set `Disk Class` to `BP_FallingDisk` |
 | Disk mesh is invisible | No mesh assigned on `BP_FallingDisk` | Open `BP_FallingDisk`, select `DiskMesh` component, assign a Static Mesh |
-| Colors don't change | Materials not assigned | Assign `Mat_Falling`, `Mat_FrozenRed`, `Mat_FrozenGreen` in `BP_FallingDisk` Details |
+| Colors don't change | Materials not assigned | Assign `Mat_Falling`, `Mat_FrozenRed`, `Mat_FrozenGreen` in `BP_FallingDisk` Class Defaults |
 | Laser does nothing | No `BP_DiskSpawner` in level | Drag `BP_DiskSpawner` into the level |
 | Crosshair never appears | `CrosshairWidgetClass` not set | Select `ShootingComponent` on `BP_Bot`, assign `WBP_Crosshair` |
 | Camera does not shift on RMB | `IA_ADS` not in IMC, or not bound in BP_Bot Event Graph | Follow Phase 7 Step B and C |
 | Player falls through frozen disk | Disk collision not `BlockAll` | Confirm `DiskMesh` collision preset in `BP_FallingDisk` |
+| HUD never appears | `HUDWidgetClass` not set on BP_DiskSpawner | Open `BP_DiskSpawner` Class Defaults, assign `WBP_PlayerHUD` to `HUD Widget Class` |
+| Win screen never appears | `WinScreenClass` not set, or `WinZ` not reachable | Assign `UI_WinScreen` to `Win Screen Class`; lower `Win Z` to test |
+| WBP_PlayerHUD Blueprint compile error | TextBlock names don't match `BindWidget` names | Rename the TextBlocks in the Designer to exactly `Text_CurrentZ` and `Text_HighestZ` |
+| "Play Infinite Mode" does nothing | Button not wired to `StartInfiniteMode` | Follow Phase 6 UI_WinScreen wiring instructions |
+| Disks only spawn at one height and don't follow player | Old fixed-Z spawn path still in use | Ensure you are using the updated `DiskSpawner.cpp` from Phase 3 |
 | `STACKOBOT_API` compile error | Build.cs not saved or VS project not regenerated | Save Build.cs, right-click .uproject → Generate VS project files, rebuild |
 
 ---
