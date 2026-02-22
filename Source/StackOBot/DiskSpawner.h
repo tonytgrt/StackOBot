@@ -54,7 +54,7 @@ public:
     // ���� Win condition ������������������������������������������������������������������������������������������������������������������������
     /** Player wins when their Z position exceeds this value. */
     UPROPERTY(EditAnywhere, Category = "Spawner|Win")
-    float WinZ = 1000.f;
+    float WinZ = 2000.f;
 
     /** Assign UI_WinScreen here in BP_DiskSpawner's Class Defaults. */
     UPROPERTY(EditDefaultsOnly, Category = "Spawner|Win")
