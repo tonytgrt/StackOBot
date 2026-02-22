@@ -22,6 +22,12 @@ public:
     UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
     TObjectPtr<UTextBlock> Text_HighestZ;
 
+    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+    TObjectPtr<UTextBlock> Text_WinGoal;
+
     /** Called every tick by ADiskSpawner to refresh both lines. */
     void UpdateValues(float CurrentZ, float HighestZ);
+
+    /** Called once from BeginPlay to set the static goal line. */
+    void SetGoalText(float GoalHeight);
 };
