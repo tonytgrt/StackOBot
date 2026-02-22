@@ -42,7 +42,7 @@ public:
 
     /** Disks that drop more than this many units below the player are also respawned. */
     UPROPERTY(EditAnywhere, Category = "Spawner|Grid")
-    float RespawnBelowOffset = 800.f;
+    float RespawnBelowOffset = 400.f;
 
     // ���� Speed range ����������������������������������������������������������������������������������������������������������������������������
     UPROPERTY(EditAnywhere, Category = "Spawner|Speed")
