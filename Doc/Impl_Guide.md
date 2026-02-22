@@ -636,9 +636,14 @@ public:
 private:
     bool bIsADS = false;
 
-    // Cached references found in BeginPlay
+    // Cached references found in BeginPlay — UPROPERTY() keeps them from being GC'd
+    UPROPERTY()
     TObjectPtr<USpringArmComponent> SpringArm;
+
+    UPROPERTY()
     TObjectPtr<ADiskSpawner>        DiskSpawner;
+
+    UPROPERTY()
     TObjectPtr<UUserWidget>         CrosshairWidget;
 
     FVector DefaultSocketOffset = FVector::ZeroVector;

@@ -24,7 +24,7 @@ public:
     virtual void TickComponent(float DeltaTime, ELevelTick TickType,
         FActorComponentTickFunction* ThisTickFunction) override;
 
-    // ©¤©¤ Tuning ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+    // ï¿½ï¿½ï¿½ï¿½ Tuning ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
     /** How far the laser can reach in Unreal Units. */
     UPROPERTY(EditAnywhere, Category = "Shooting")
@@ -42,7 +42,7 @@ public:
     UPROPERTY(EditDefaultsOnly, Category = "Shooting|ADS")
     TSubclassOf<UUserWidget> CrosshairWidgetClass;
 
-    // ©¤©¤ Input handlers (call these from BP_Bot's Event Graph) ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+    // ï¿½ï¿½ï¿½ï¿½ Input handlers (call these from BP_Bot's Event Graph) ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
     UFUNCTION(BlueprintCallable, Category = "Shooting")
     void StartADS();
@@ -56,9 +56,14 @@ public:
 private:
     bool bIsADS = false;
 
-    // Cached references found in BeginPlay
+    // Cached references found in BeginPlay â€” UPROPERTY() keeps them from being GC'd
+    UPROPERTY()
     TObjectPtr<USpringArmComponent> SpringArm;
+
+    UPROPERTY()
     TObjectPtr<ADiskSpawner>        DiskSpawner;
+
+    UPROPERTY()
     TObjectPtr<UUserWidget>         CrosshairWidget;
 
     FVector DefaultSocketOffset = FVector::ZeroVector;
