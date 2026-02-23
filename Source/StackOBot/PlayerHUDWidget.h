@@ -12,22 +12,14 @@ class STACKOBOT_API UPlayerHUDWidget : public UUserWidget
     GENERATED_BODY()
 
 public:
-    /**
-     * These TextBlock names must match exactly what you name the widgets
-     * inside WBP_PlayerHUD in the Designer tab.
-     */
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> Text_CurrentZ;
-
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> Text_HighestZ;
-
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> Text_WinGoal;
-
     /** Called every tick by ADiskSpawner to refresh both lines. */
     void UpdateValues(float CurrentZ, float HighestZ);
 
     /** Called once from BeginPlay to set the static goal line. */
     void SetGoalText(float GoalHeight);
+
+private:
+    // Looks up a TextBlock by widget name at runtime — avoids BindWidget
+    // serialization issues in packaged Shipping builds.
+    void SetBlockText(FName WidgetName, const FString& Text);
 };
