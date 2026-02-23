@@ -16,13 +16,13 @@ public:
      * These TextBlock names must match exactly what you name the widgets
      * inside WBP_PlayerHUD in the Designer tab.
      */
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+    UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> Text_CurrentZ;
 
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+    UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> Text_HighestZ;
 
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+    UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> Text_WinGoal;
 
     /** Called every tick by ADiskSpawner to refresh both lines. */
