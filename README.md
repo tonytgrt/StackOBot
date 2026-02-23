@@ -3,7 +3,12 @@
 A third-person climbing platformer built in **Unreal Engine 5** (C++ / Blueprint hybrid) based on the Stack-O-Bot startup fab.
 The player shoots falling disks to freeze them into platforms, then uses those platforms to climb to a high-altitude win zone.
 
+![](Doc/thumb.png)
+
 ---
+
+## Demo Video
+https://youtu.be/Ms5AON0CXhE 
 
 ## Gameplay Overview
 
@@ -59,7 +64,7 @@ Disks rain down from above in a grid pattern. The player must aim and shoot them
 
 ### HUD
 
-Three text lines are displayed in the top-left corner at all times:
+Three text lines are displayed in corners at all times:
 
 | Label              | Content                                                                 |
 | ------------------ | ----------------------------------------------------------------------- |
