@@ -8,6 +8,7 @@ class ADiskSpawner;
 class AFallingDisk;
 class USpringArmComponent;
 class UUserWidget;
+class UNiagaraSystem;
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class STACKOBOT_API UShootingComponent : public UActorComponent
@@ -41,6 +42,10 @@ public:
     /** Widget class for the crosshair. Create WBP_Crosshair in the editor and assign here. */
     UPROPERTY(EditDefaultsOnly, Category = "Shooting|ADS")
     TSubclassOf<UUserWidget> CrosshairWidgetClass;
+
+    /** Niagara beam system for the laser visual. Assign NS_LaserBeam here. */
+    UPROPERTY(EditDefaultsOnly, Category = "Shooting")
+    TObjectPtr<UNiagaraSystem> LaserEffect;
 
     // ���� Input handlers (call these from BP_Bot's Event Graph) ��������������������������������������
 
