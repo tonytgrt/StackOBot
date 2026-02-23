@@ -34,3 +34,4 @@ Desktop.ini
 
 # macOS metadata
 .DS_Store
+*.xcworkspace
